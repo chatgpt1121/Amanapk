@@ -99,15 +99,22 @@ class BluetoothConnectionService : Service() {
         Thread {
             val adapter = BluetoothAdapter.getDefaultAdapter()
             adapter.cancelDiscovery()
+            try { Thread.sleep(400) } catch (_: InterruptedException) {}
             broadcastState("Connecting...")
 
             var clientSocket: BluetoothSocket? = null
-            try {
-                clientSocket = device.createInsecureRfcommSocketToServiceRecord(APP_UUID)
-                clientSocket.connect()
-            } catch (e: IOException) {
-                try { clientSocket?.close() } catch (_: IOException) {}
-                clientSocket = null
+            for (attempt in 1..3) {
+                try {
+                    clientSocket = device.createInsecureRfcommSocketToServiceRecord(APP_UUID)
+                    clientSocket.connect()
+                    break
+                } catch (e: IOException) {
+                    try { clientSocket?.close() } catch (_: IOException) {}
+                    clientSocket = null
+                    if (attempt < 3) {
+                        try { Thread.sleep(600) } catch (_: InterruptedException) {}
+                    }
+                }
             }
 
             if (clientSocket == null) {
