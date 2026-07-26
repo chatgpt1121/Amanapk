@@ -18,10 +18,19 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Find the Gradle project folder
+        id: findroot
+        run: |
+          PROJECT_DIR=$(dirname "$(find . -maxdepth 4 -name settings.gradle | head -n 1)")
+          echo "Found project dir: $PROJECT_DIR"
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
       - name: Grant execute permission for gradlew
+        working-directory: ${{ steps.findroot.outputs.dir }}
         run: chmod +x gradlew || true
 
       - name: Generate Gradle wrapper (if missing)
+        working-directory: ${{ steps.findroot.outputs.dir }}
         run: |
           if [ ! -f gradlew ]; then
             gradle wrapper --gradle-version 8.5
@@ -29,10 +38,11 @@ jobs:
           fi
 
       - name: Build debug APK
+        working-directory: ${{ steps.findroot.outputs.dir }}
         run: ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: AmanRemote-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ steps.findroot.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
