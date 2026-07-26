@@ -16,16 +16,9 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
 
-/**
- * Foreground service that owns the Bluetooth socket connection.
- * One phone acts as SERVER (listens, waits for the other phone to connect),
- * the other acts as CLIENT (connects to a paired device).
- * Once connected, either side can send simple text commands like "VOL_UP".
- */
 class BluetoothConnectionService : Service() {
 
     companion object {
-        // Fixed UUID shared by both the server and client side of the app.
         val APP_UUID: UUID = UUID.fromString("8ce255c0-200a-11e0-ac64-0800200c9a66")
         const val CHANNEL_ID = "aman_remote_channel"
         const val NOTIF_ID = 101
@@ -79,16 +72,15 @@ class BluetoothConnectionService : Service() {
         startForeground(NOTIF_ID, notification)
     }
 
-    /** Start listening for an incoming connection (this phone = receiver). */
     @SuppressLint("MissingPermission")
     fun startServer() {
         startForegroundNotification()
         acceptThread = Thread {
             try {
                 val adapter = BluetoothAdapter.getDefaultAdapter()
-                serverSocket = adapter.listenUsingRfcommWithServiceRecord("AmanRemote", APP_UUID)
+                serverSocket = adapter.listenUsingInsecureRfcommWithServiceRecord("AmanRemote", APP_UUID)
                 broadcastState("Waiting for connection...")
-                val clientSocket = serverSocket?.accept() // blocks until a client connects
+                val clientSocket = serverSocket?.accept()
                 if (clientSocket != null) {
                     setupStreams(clientSocket)
                     broadcastState("Connected")
@@ -101,22 +93,40 @@ class BluetoothConnectionService : Service() {
         acceptThread?.start()
     }
 
-    /** Connect out to an already-paired device (this phone = controller/remote). */
     @SuppressLint("MissingPermission")
     fun connectToDevice(device: BluetoothDevice) {
         startForegroundNotification()
         Thread {
+            val adapter = BluetoothAdapter.getDefaultAdapter()
+            adapter.cancelDiscovery()
+            broadcastState("Connecting...")
+
+            var clientSocket: BluetoothSocket? = null
             try {
-                BluetoothAdapter.getDefaultAdapter().cancelDiscovery()
-                val clientSocket = device.createRfcommSocketToServiceRecord(APP_UUID)
-                broadcastState("Connecting...")
-                clientSocket.connect() // blocks until connected or throws
-                setupStreams(clientSocket)
-                broadcastState("Connected")
-                listenForMessages()
+                clientSocket = device.createInsecureRfcommSocketToServiceRecord(APP_UUID)
+                clientSocket.connect()
             } catch (e: IOException) {
-                broadcastState("Connection failed: ${e.message}")
+                try { clientSocket?.close() } catch (_: IOException) {}
+                clientSocket = null
             }
+
+            if (clientSocket == null) {
+                try {
+                    val method = device.javaClass.getMethod(
+                        "createInsecureRfcommSocket", Int::class.javaPrimitiveType
+                    )
+                    clientSocket = method.invoke(device, 1) as BluetoothSocket
+                    clientSocket.connect()
+                } catch (e: Exception) {
+                    try { clientSocket?.close() } catch (_: IOException) {}
+                    broadcastState("Connection failed: ${e.message}")
+                    return@Thread
+                }
+            }
+
+            setupStreams(clientSocket)
+            broadcastState("Connected")
+            listenForMessages()
         }.start()
     }
 
@@ -147,7 +157,6 @@ class BluetoothConnectionService : Service() {
         }
     }
 
-    /** Send a text command to the other phone, e.g. "VOL_UP", "FLASH_ON". */
     fun sendCommand(command: String) {
         try {
             outputStream?.write((command + "\n").toByteArray())
